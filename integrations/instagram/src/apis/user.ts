@@ -14,18 +14,40 @@ export const getUserProfile = ({
 }): Promise<IncomingContact> => {
   const endpoint = `${ctx.auth.metadata.version}/${psid}`
 
-  return rescue(endpoint, async () => {
+  const fetchFields = (fields: string) => {
     const queries = new URLSearchParams({
-      fields: "id,name,username,profile_pic",
+      fields,
       access_token: ctx.auth.tokens.accessToken,
     })
-    const response = await instagramBusinessClient.get<InstagramUserProfile>(
+    return instagramBusinessClient.get<InstagramUserProfile>(
       `${ctx.auth.metadata.version}/${psid}?${queries.toString()}`,
     )
+  }
+
+  return rescue(endpoint, async () => {
+    // Requesting every field at once means one unavailable field fails the whole
+    // call, and the contact is then created with no name, no username and no
+    // avatar. `instagram-facebook` already retries without `profile_pic` for
+    // this reason; mirror that here, with a last step that asks for the username
+    // alone so a contact is never left completely blank.
+    let response: InstagramUserProfile
+    try {
+      response = await fetchFields("id,name,username,profile_pic")
+    } catch (error) {
+      logger.warn({ psid, error }, "getUserProfile: retrying without profile_pic")
+      try {
+        response = await fetchFields("id,name,username")
+      } catch (retryError) {
+        logger.warn({ psid, error: retryError }, "getUserProfile: retrying with username only")
+        response = await fetchFields("id,username")
+      }
+    }
 
     const result: IncomingContact = {
+      // `username` is already requested above and was being discarded. Accounts
+      // with no display name set would end up nameless in the inbox.
+      firstName: response.name || response.username,
       sourceId: psid,
-      firstName: response.name,
     }
 
     if (response.profile_pic) {
