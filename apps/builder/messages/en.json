@@ -1111,7 +1111,8 @@
       "english": "English",
       "label": "Language",
       "placeholder": "Select language",
-      "vietnamese": "Tiếng Việt"
+      "vietnamese": "Tiếng Việt",
+      "portuguese": "Portuguese (Brazil)"
     },
     "lastName": {
       "label": "Last name",
