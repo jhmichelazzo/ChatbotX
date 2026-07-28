@@ -19,6 +19,10 @@ import type {
 } from "@chatbotx.io/database/types"
 import { webhookChannelOrigin } from "@chatbotx.io/events/context"
 import {
+  type InstagramAuthValue,
+  sendInstagramPrivateReply,
+} from "@chatbotx.io/integration-instagram"
+import {
   type MessengerAuthValue,
   sendPrivateReply,
 } from "@chatbotx.io/integration-messenger"
@@ -222,7 +226,7 @@ export async function postPublicCommentReply(props: {
 async function executePublicReply(
   publicReply: FBCommentReply,
   ctx: {
-    auth: MessengerAuthValue
+    auth: MessengerAuthValue | InstagramAuthValue
     integrationType: string
     integrationIdentifier: string
     commentId: string
@@ -303,7 +307,7 @@ async function executePublicReply(
 async function executePrivateReply(
   privateReply: FBCommentReply,
   ctx: {
-    auth: MessengerAuthValue
+    auth: MessengerAuthValue | InstagramAuthValue
     integrationType: string
     integrationIdentifier: string
     commentId: string
@@ -321,9 +325,18 @@ async function executePrivateReply(
 
   if (privateReply.type === "text" && privateReply.value) {
     if (ctx.channelType === "messenger") {
-      await sendPrivateReply(ctx.auth, ctx.commentId, privateReply.value)
+      await sendPrivateReply(
+        ctx.auth as MessengerAuthValue,
+        ctx.commentId,
+        privateReply.value,
+      )
+    } else if (ctx.channelType === "instagram") {
+      await sendInstagramPrivateReply(
+        ctx.auth as InstagramAuthValue,
+        ctx.commentId,
+        privateReply.value,
+      )
     }
-    // Instagram private DM text reply: out of scope MVP (no private_replies API)
     return
   }
 
@@ -456,7 +469,10 @@ export async function processCommentAutomation(
       integrationType as IntegrationType,
       integrationIdentifier,
     )
-  const auth = integrationRow.auth as MessengerAuthValue
+  // Instagram channels store an `InstagramAuthValue` here; the previous cast to
+  // `MessengerAuthValue` was what allowed Instagram to be silently routed into
+  // the Messenger send path.
+  const auth = integrationRow.auth as MessengerAuthValue | InstagramAuthValue
 
   const contactInbox = await contactInboxService.findBy({
     where: { id: contactInboxId },

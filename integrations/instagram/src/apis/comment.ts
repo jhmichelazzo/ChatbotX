@@ -56,3 +56,37 @@ export const hideComment = (
     }),
   )
 }
+
+/**
+ * Instagram accepts `recipient: { comment_id }` on the messages endpoint, which
+ * opens a conversation with someone who commented but never sent a DM before.
+ *
+ * The comment automation previously skipped Instagram entirely, on the
+ * assumption that no private reply API existed for it. It does — verified
+ * against `graph.instagram.com/<version>/me/messages`, HTTP 200.
+ */
+export const sendPrivateReply = (
+  auth: InstagramAuthValue,
+  commentId: string,
+  message: string,
+): Promise<{ recipient_id: string; message_id: string }> => {
+  const version = auth.metadata.version ?? DEFAULT_API_VERSION
+  const endpoint = `${version}/me/messages`
+
+  return rescue(endpoint, () =>
+    instagramBusinessClient.post<{ recipient_id: string; message_id: string }>(
+      endpoint,
+      {
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${auth.tokens.accessToken}`,
+        },
+        json: {
+          recipient: { comment_id: commentId },
+          message: { text: message },
+        },
+        retry: 0,
+      },
+    ),
+  )
+}
