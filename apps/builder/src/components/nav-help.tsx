@@ -19,10 +19,29 @@ import { useTenantSettings } from "@/features/tenant/tenant-settings-provider"
 
 const ALLOWED_URL_RE = /^(https?:\/\/|mailto:)/i
 
+/**
+ * Help entries that always show, on top of whatever the tenant configures.
+ *
+ * Tenant-configured `helpItems` are an enterprise feature, so a community
+ * deployment has no way to point operators at its own documentation. These are
+ * merged in rather than replacing the tenant list, so nothing is hidden when
+ * both exist.
+ */
+const OWN_HELP_ITEMS = [
+  {
+    id: "abdal-como-usar",
+    name: "Como usar",
+    url: "https://comousar.abdaldigital.com.br",
+    icon: "book-open",
+  },
+]
+
 export const NavHelp = () => {
   const { isMobile } = useSidebar()
   const t = useTranslations()
-  const { helpItems } = useTenantSettings()
+  const { helpItems: tenantHelpItems } = useTenantSettings()
+
+  const helpItems = [...OWN_HELP_ITEMS, ...tenantHelpItems]
 
   if (helpItems.length === 0) {
     return null
