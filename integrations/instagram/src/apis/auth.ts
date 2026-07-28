@@ -9,6 +9,17 @@ import { logger } from "../lib/logger"
 const INSTAGRAM_OAUTH_AUTHORIZE_URL =
   "https://www.instagram.com/oauth/authorize"
 
+/**
+ * Instagram returns `MEDIA_CREATOR` for Creator accounts, not `CREATOR`.
+ * Rejecting it made the connect flow bounce back to the channel screen with no
+ * error at all, which reads as a broken app rather than an unsupported account.
+ *
+ * `PERSONAL` stays rejected on purpose: personal accounts have no messaging API,
+ * so accepting them would only defer the failure to the point where no message
+ * ever arrives.
+ */
+const PROFESSIONAL_ACCOUNT_TYPES = ["BUSINESS", "CREATOR", "MEDIA_CREATOR"]
+
 export type InstagramAccount = {
   id: string
   name: string
@@ -115,10 +126,10 @@ export async function getInstagramAccount(
       }),
     )
 
-    if (res.account_type !== "BUSINESS" && res.account_type !== "CREATOR") {
+    if (!PROFESSIONAL_ACCOUNT_TYPES.includes(res.account_type ?? "")) {
       logger.warn(
         { account_type: res.account_type },
-        "Instagram account is not a Business or Creator account",
+        "Instagram account is not a professional account",
       )
       return null
     }
