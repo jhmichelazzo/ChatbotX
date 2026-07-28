@@ -88,33 +88,48 @@ jobs:
 
       - name: Conferir assinatura de cada patch
         run: |
-          set -u
           NS="${{ env.REGISTRY }}/${{ steps.ns.outputs.owner }}"
           FALHAS=0
 
-          checa() { # <descrição> <resultado do grep>
-            if [ "$2" -ge 1 ]; then echo "  OK       $1"; else echo "  FALTANDO $1"; FALHAS=$((FALHAS+1)); fi
+          # A assinatura tem que ser TEXTO (mensagem de log, string comparada,
+          # rótulo de interface). Nome de função NÃO serve: o bundler renomeia.
+          # Foi isso que reprovou a primeira execução — procurava
+          # `sendInstagramPrivateReply`, que no bundle virou `sendPrivateReply$1`.
+          #
+          # O padrão vai por variável de ambiente para não brigar com as aspas,
+          # e o grep roda dentro de `if` para o `bash -e` do runner não matar o
+          # passo quando um patch faltar (que é justamente o caso a reportar).
+          checa() { # <descrição> <imagem> <padrão> <caminho>
+            if docker run --rm -e PAT="$3" --entrypoint sh "$2" \
+                 -c 'grep -rqF -- "$PAT" '"$4"' 2>/dev/null'; then
+              echo "  OK       $1"
+            else
+              echo "  FALTANDO $1"
+              FALHAS=$((FALHAS+1))
+            fi
           }
 
-          W="docker run --rm --entrypoint sh $NS/chatbotx-worker:abdal -c"
-          B="docker run --rm --entrypoint sh $NS/chatbotx-builder:abdal -c"
+          WK="$NS/chatbotx-worker:abdal"
+          BL="$NS/chatbotx-builder:abdal"
+          WD=/app/apps/worker/dist
+          BD=/app/apps/builder/.next
 
-          echo "WORKER"
-          checa "comentário vira direct no Instagram" \
-            "$($W 'grep -rl sendInstagramPrivateReply /app/apps/worker/dist 2>/dev/null | grep -cv "\.map$"' || echo 0)"
-          checa "fallback de campos do perfil do contato" \
-            "$($W 'grep -rl "retrying without profile_pic" /app/apps/worker/dist 2>/dev/null | grep -cv "\.map$"' || echo 0)"
+          echo "WORKER  ($WK)"
+          checa "comentário vira direct no Instagram" "$WK" \
+            'channelType === "instagram") await sendPrivateReply' "$WD"
+          checa "fallback de campos do perfil do contato" "$WK" \
+            'retrying without profile_pic' "$WD"
 
-          echo "BUILDER"
-          checa "conta de Criador (MEDIA_CREATOR) conecta" \
-            "$($B 'grep -rl MEDIA_CREATOR /app/apps/builder/.next/server/chunks 2>/dev/null | wc -l' || echo 0)"
-          checa "painel traduzido em pt-BR" \
-            "$($B 'grep -rl "Espaço de trabalho" /app/apps/builder/.next 2>/dev/null | wc -l' || echo 0)"
-          checa "menu lateral Como usar" \
-            "$($B 'grep -rl comousar /app/apps/builder/.next/static/chunks 2>/dev/null | wc -l' || echo 0)"
+          echo "BUILDER ($BL)"
+          checa "conta de Criador (MEDIA_CREATOR) conecta" "$BL" \
+            'MEDIA_CREATOR' "$BD/server/chunks"
+          checa "painel traduzido em pt-BR" "$BL" \
+            'Espaço de trabalho' "$BD"
+          checa "menu lateral Como usar" "$BL" \
+            'comousar.abdaldigital.com.br' "$BD/static/chunks"
 
           echo
-          if [ $FALHAS -eq 0 ]; then
+          if [ "$FALHAS" -eq 0 ]; then
             echo "TUDO NO LUGAR — imagens seguras para subir em produção"
           else
             echo "$FALHAS patch(es) faltando — NAO subir estas imagens"
