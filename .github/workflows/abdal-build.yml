@@ -1,0 +1,133 @@
+# Monta as imagens da branch `abdal` (nossos 5 patches em cima do código deles).
+#
+# Arquivo separado do `release.yml` de propósito: o release.yml é deles e é
+# reescrito quando eles mexem. Um arquivo que só existe no nosso fork nunca
+# conflita no rebase.
+#
+# Só builder e worker: são os dois que a gente patcheia e fixa no compose de
+# produção. `realtime` e `mcp` continuam vindo das imagens oficiais deles.
+name: Build Abdal
+
+on:
+  push:
+    branches: [abdal]
+  workflow_dispatch: # botão "Run workflow" na aba Actions
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  build:
+    name: ${{ matrix.label }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: builder
+            image: chatbotx-builder
+            dockerfile: ./apps/builder/docker/Dockerfile
+          - label: worker
+            image: chatbotx-worker
+            dockerfile: ./apps/worker/docker/Dockerfile
+    steps:
+      - uses: actions/checkout@v5
+
+      # ghcr.io só aceita namespace em minúsculas
+      - name: Namespace
+        id: ns
+        run: echo "owner=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build e push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          push: true
+          # Duas etiquetas: `abdal` é a móvel, sempre a mais recente. A do commit
+          # é fixa e permite voltar para uma montagem específica se a nova falhar.
+          tags: |
+            ${{ env.REGISTRY }}/${{ steps.ns.outputs.owner }}/${{ matrix.image }}:abdal
+            ${{ env.REGISTRY }}/${{ steps.ns.outputs.owner }}/${{ matrix.image }}:abdal-${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          platforms: linux/amd64
+
+  # Confere que os 5 patches sobreviveram ao build. Existe porque em 25/07 um
+  # patch se perdeu num build e ficou 3 dias fora do ar sem erro nenhum no log.
+  auditoria:
+    name: Auditoria dos patches
+    runs-on: ubuntu-latest
+    needs: build
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Namespace
+        id: ns
+        run: echo "owner=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Conferir assinatura de cada patch
+        run: |
+          set -u
+          NS="${{ env.REGISTRY }}/${{ steps.ns.outputs.owner }}"
+          FALHAS=0
+
+          checa() { # <descrição> <resultado do grep>
+            if [ "$2" -ge 1 ]; then echo "  OK       $1"; else echo "  FALTANDO $1"; FALHAS=$((FALHAS+1)); fi
+          }
+
+          W="docker run --rm --entrypoint sh $NS/chatbotx-worker:abdal -c"
+          B="docker run --rm --entrypoint sh $NS/chatbotx-builder:abdal -c"
+
+          echo "WORKER"
+          checa "comentário vira direct no Instagram" \
+            "$($W 'grep -rl sendInstagramPrivateReply /app/apps/worker/dist 2>/dev/null | grep -cv "\.map$"' || echo 0)"
+          checa "fallback de campos do perfil do contato" \
+            "$($W 'grep -rl "retrying without profile_pic" /app/apps/worker/dist 2>/dev/null | grep -cv "\.map$"' || echo 0)"
+
+          echo "BUILDER"
+          checa "conta de Criador (MEDIA_CREATOR) conecta" \
+            "$($B 'grep -rl MEDIA_CREATOR /app/apps/builder/.next/server/chunks 2>/dev/null | wc -l' || echo 0)"
+          checa "painel traduzido em pt-BR" \
+            "$($B 'grep -rl "Espaço de trabalho" /app/apps/builder/.next 2>/dev/null | wc -l' || echo 0)"
+          checa "menu lateral Como usar" \
+            "$($B 'grep -rl comousar /app/apps/builder/.next/static/chunks 2>/dev/null | wc -l' || echo 0)"
+
+          echo
+          if [ $FALHAS -eq 0 ]; then
+            echo "TUDO NO LUGAR — imagens seguras para subir em produção"
+          else
+            echo "$FALHAS patch(es) faltando — NAO subir estas imagens"
+            exit 1
+          fi
+
+      - name: Como usar as imagens
+        if: success()
+        run: |
+          NS="${{ env.REGISTRY }}/${{ steps.ns.outputs.owner }}"
+          echo "### Imagens prontas" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "$NS/chatbotx-builder:abdal" >> $GITHUB_STEP_SUMMARY
+          echo "$NS/chatbotx-worker:abdal" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "Auditoria dos 5 patches: aprovada." >> $GITHUB_STEP_SUMMARY
